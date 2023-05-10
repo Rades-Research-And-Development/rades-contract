@@ -2,15 +2,15 @@
 pragma solidity ^0.8.15;
 
 interface INFT {
-    function royaltyInfo(uint256 id, uint256 _salePrice)
-        external
-        view
-        returns (address, uint256);
+    function royaltyInfo(
+        uint256 id,
+        uint256 _salePrice
+    ) external view returns (address, uint256);
 
-    function balanceOf(address account, uint256 id)
-        external
-        view
-        returns (uint256);
+    function balanceOf(
+        address account,
+        uint256 id
+    ) external view returns (uint256);
 
     function ownerOf(uint256 tokenId) external view returns (address owner);
 
@@ -29,5 +29,5 @@ interface INFT {
         bytes calldata data
     ) external;
 
-    function supportsInterface(bytes4 interfaceID) external returns (bool);
+    function supportsInterface(bytes4 interfaceID) external view returns (bool);
 }

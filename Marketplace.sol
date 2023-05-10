@@ -140,10 +140,8 @@ contract Marketplace is ERC721Holder, ERC1155Holder, Ownable {
 
     mapping(uint256 => SaleInfo) public sales; // saleId => saleInfo
     mapping(uint256 => AuctionInfo) public auctions; // auctionId => AuctionInfo
-
     mapping(uint256 => bool) public cancelledSale; // saleId => status
     mapping(uint256 => bool) public cancelledAuction; // auctionId => status
-
     mapping(uint256 => bool) public claimed; // auctionId => status
     mapping(uint256 => address) public highestBidder; // auctionId => highest bidder address
     mapping(address => uint256) public escrow; // currency address => escrow amount
@@ -225,61 +223,6 @@ contract Marketplace is ERC721Holder, ERC1155Holder, Ownable {
         emit SaleCreated(saleId, nftAddress, nftId);
     }
 
-    /// @notice return all sale by panigation
-    /// @param pageNo is step Page
-    /// @param pageSize is Length
-    function getSales(
-        uint256 pageNo,
-        uint256 pageSize
-    ) public view returns (SaleInfo[] memory) {
-        uint256 salesLength = saleIdCounter;
-        uint256 startIndex = (pageNo - 1) * pageSize;
-        uint256 endIndex = startIndex + pageSize;
-
-        if (startIndex >= salesLength) {
-            return new SaleInfo[](0);
-        }
-
-        if (endIndex > salesLength) {
-            endIndex = salesLength;
-        }
-
-        uint256 resultLength = endIndex - startIndex;
-        SaleInfo[] memory saleInfos = new SaleInfo[](resultLength);
-
-        for (uint256 i = startIndex; i < endIndex; i++) {
-            saleInfos[i - startIndex] = sales[i + 1];
-        }
-
-        return saleInfos;
-    }
-
-    function getAuctions(
-        uint256 pageNo,
-        uint256 pageSize
-    ) public view returns (AuctionInfo[] memory) {
-        uint256 auctionLength = auctionIdCounter;
-        uint256 startIndex = (pageNo - 1) * pageSize;
-        uint256 endIndex = startIndex + pageSize;
-
-        if (startIndex >= auctionLength) {
-            return new AuctionInfo[](0);
-        }
-
-        if (endIndex > auctionLength) {
-            endIndex = auctionLength;
-        }
-
-        uint256 resultLength = endIndex - startIndex;
-        AuctionInfo[] memory auctionInfos = new AuctionInfo[](resultLength);
-
-        for (uint256 i = startIndex; i < endIndex; i++) {
-            auctionInfos[i - startIndex] = auctions[i];
-        }
-
-        return auctionInfos;
-    }
-
     /// @notice Withdraws in-contract balance of a particular token
     /// @dev use address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa) for ETH
     function claimFunds(address tokenAddress) external {
@@ -341,37 +284,38 @@ contract Marketplace is ERC721Holder, ERC1155Holder, Ownable {
             revert NotEnoughStock();
 
         address currency = saleInfo.currency;
-        IERC20 token = IERC20(currency);
-        INFT nftContract = INFT(saleInfo.nftAddress);
-        //! if (amountFromBalance > claimableFunds[msg.sender][currency])
-        //!     revert NotEnoughBalance();
-
-        if (token.balanceOf(msg.sender) < (amountToBuy * saleInfo.price)) {
+        if (amountFromBalance > claimableFunds[msg.sender][currency])
             revert NotEnoughBalance();
-        }
+
+        INFT nftContract = INFT(saleInfo.nftAddress);
         (address artistAddress, uint256 royalties) = nftContract.royaltyInfo(
             saleInfo.nftId,
             amountToBuy * saleInfo.price
         );
 
-        //! if (amountFromBalance != 0) {
-        //!     claimableFunds[msg.sender][currency] -= amountFromBalance;
-        //! }
+        if (amountFromBalance != 0) {
+            claimableFunds[msg.sender][currency] -= amountFromBalance;
+        }
 
         // system fee
         (address systemWallet, uint256 fee) = _REGISTRY.feeInfo(
             amountToBuy * saleInfo.price
         );
-
-        //! claimableFunds[systemWallet][currency] += fee;
+        claimableFunds[systemWallet][currency] += fee;
 
         // artist royalty if artist isn't the seller
+        if (saleInfo.owner != artistAddress) {
+            claimableFunds[artistAddress][currency] += royalties;
+        } else {
+            // since the artist is the seller
+            delete royalties;
+        }
 
         // seller gains
-        //! claimableFunds[saleInfo.owner][currency] +=
-        //!     (amountToBuy * saleInfo.price) -
-        //!     fee -
-        //!     royalties;
+        claimableFunds[saleInfo.owner][currency] +=
+            (amountToBuy * saleInfo.price) -
+            fee -
+            royalties;
 
         // update the sale info
         unchecked {
@@ -380,30 +324,13 @@ contract Marketplace is ERC721Holder, ERC1155Holder, Ownable {
         }
         // send the nft price to the platform
         if (currency != ETH) {
-            //! token.safeTransferFrom(
-            //!     msg.sender,
-            //!     address(this),
-            //!     (amountToBuy * saleInfo.price) - amountFromBalance
-            //! );
-            if (
-                saleInfo.owner != artistAddress && artistAddress != address(0)
-            ) {
-                token.safeTransferFrom(
-                    msg.sender,
-                    saleInfo.owner,
-                    (amountToBuy * saleInfo.price) - (fee + royalties)
-                );
-                token.safeTransferFrom(msg.sender, artistAddress, royalties);
-            } else {
-                // since the artist is the seller
-                token.safeTransferFrom(
-                    msg.sender,
-                    saleInfo.owner,
-                    (amountToBuy * saleInfo.price) - fee
-                );
-            }
+            IERC20 token = IERC20(currency);
 
-            token.safeTransferFrom(msg.sender, systemWallet, fee);
+            token.safeTransferFrom(
+                msg.sender,
+                address(this),
+                (amountToBuy * saleInfo.price) - amountFromBalance
+            );
         } else if (
             msg.value != (amountToBuy * saleInfo.price) - amountFromBalance
         ) revert InputValueAndPriceMismatch();
@@ -423,7 +350,6 @@ contract Marketplace is ERC721Holder, ERC1155Holder, Ownable {
                 amountToBuy,
                 ""
             );
-
         emit Purchase(saleId, msg.sender, recipient);
         return true;
     }

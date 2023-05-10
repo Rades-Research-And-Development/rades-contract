@@ -3,6 +3,7 @@ import { ethers } from "hardhat";
 import { Creature, CreatureAccessory, Marketplace, RadesMockCurrency, Registry } from "../typechain-types";
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
 import { promises } from "dns";
+import exp from "constants";
 
 describe("Rades Marketplace", function () {
   let Registry,
@@ -17,7 +18,8 @@ describe("Rades Marketplace", function () {
     RadesMockCurrencyInstance: RadesMockCurrency,
     owner: SignerWithAddress,
     address1: SignerWithAddress,
-    address2: SignerWithAddress;
+    address2: SignerWithAddress,
+    address3: SignerWithAddress;
   async function deployContract() {
     Registry = await ethers.getContractFactory("Registry")
     RegistryInstance = await Registry.deploy()
@@ -36,8 +38,9 @@ describe("Rades Marketplace", function () {
 
     const address = await ethers.getSigners();
     owner = address[0]
-    address1 = address[0]
-    address2 = address[0]
+    address1 = address[1]
+    address2 = address[2]
+    address3 = address[3]
     return owner
   }
 
@@ -60,11 +63,11 @@ describe("Rades Marketplace", function () {
   });
 
   it("Mint and Sale Creature (ERC721)", async function () {
-    const tx = await CreatureInstance.safeMint(address1.address)
+    const tx = await CreatureInstance.connect(owner).safeMint(address1.address, 111)
     const receipt = await tx.wait()
     const tokenId = Number(receipt?.events?.[0]?.args?.tokenId)
-    await CreatureInstance.approve(MarketplaceInstance.address, tokenId)
-    const saleTx = await MarketplaceInstance.createSale(
+    await CreatureInstance.connect(address1).approve(MarketplaceInstance.address, tokenId)
+    const saleTx = await MarketplaceInstance.connect(address1).createSale(
       // isERC721:
       true,
       // nftAddress:
@@ -74,9 +77,9 @@ describe("Rades Marketplace", function () {
       // amount:
       1,
       // startTime:
-      Date.now(),
+      (await ethers.provider.getBlock(1)).timestamp,
       // endTime:
-      new Date(Date.now() + (3 * 24 * 60 * 60 * 1000)).getTime(),
+      (await ethers.provider.getBlock(1)).timestamp + (3 * 24 * 60 * 60 * 1000),
       // price:
       100,
       // currency:
@@ -101,45 +104,124 @@ describe("Rades Marketplace", function () {
     expect(await CreatureInstance.balanceOf(MarketplaceInstance.address)).to.equal(1);
     expect(await CreatureInstance.ownerOf(_nftId)).to.equal(MarketplaceInstance.address);
     expect(await CreatureInstance.balanceOf(address1.address)).to.equal(0);
-    // let tx = await instance.connect(owner).mintToken(DEFAULT_METADATA_CID, DEFAULT_TOKEN_ROYALTY)
-    // let receipt = await tx.wait()
-    // let events = receipt.events?.map((x) => x.event)
-    // const newOwnerBalance = await instance.balanceOf(owner.address)
+  });
+  it("Should Buy Sale Creature (ERC721)", async function () {
+    const saleInfo = await MarketplaceInstance.sales(1)
+    const nftId = saleInfo[0]
+    const price = saleInfo[saleInfo.length - 1] as any
+    const buyer = address2, seller = address1;
+    await RadesMockCurrencyInstance.connect(owner).mint(buyer.address, 10_000);
+    await RadesMockCurrencyInstance.connect(buyer).approve(MarketplaceInstance.address, 100)
 
-    // expect(initialOwnerBalance).to.equal(0)
-    // expect(newOwnerBalance).to.equal(1)
-    // expect(events).not.be.null
-    // expect(events!![0]).to.equal("Transfer")
-    // expect(events!![1]).to.equal("ApprovalForAll")
-    // expect(events!![2]).to.equal("ArtCollectibleMinted")
+    const buyTx = await MarketplaceInstance.connect(buyer).buy(
+      // saleId
+      1,
+      // recipient
+      address2.address,
+      // amountToBuy
+      1,
+      // amountFromBalance
+      0
+    );
+    const receiptBuy = (await buyTx).wait();
+    const buyEvents = (await receiptBuy)?.events || [];
+    const buyInfo = buyEvents[buyEvents?.length - 1]?.args;
+    const [system, fee] = await RegistryInstance.feeInfo(price)
+
+    expect(await RadesMockCurrencyInstance.balanceOf(system)).to.equal(fee)
+    expect(await RadesMockCurrencyInstance.balanceOf(seller.address)).to.equal(price - Number(fee))
+    expect(await RadesMockCurrencyInstance.balanceOf(buyer.address)).to.equal(10_000 - price)
+    expect(await CreatureInstance.ownerOf(nftId)).to.equal(buyer.address)
 
   });
-  it("Buy Sale Creature (ERC721)", async function () {
-    await RadesMockCurrencyInstance.mint(address1.address, 10_000);
-    expect(await RadesMockCurrencyInstance.balanceOf(address1.address)).to.equal(10_000)
-    RadesMockCurrencyInstance.approve()
+  it("Mint and Sale Creature Accessory (ERC1155)", async function () {
+    const tx = await CreatureAccessoryInstance.connect(owner).mint(address1.address, 111, 10)
+    const receipt = await tx.wait()
+    const tokenId = Number(receipt?.events?.[0]?.args?.id)
+    const amount = Number(receipt?.events?.[0]?.args?.value)
+    await CreatureAccessoryInstance.connect(address1).setApprovalForAll(MarketplaceInstance.address, true)
+    const saleTx = await MarketplaceInstance.connect(address1).createSale(
+      // isERC721:
+      false,
+      // nftAddress:
+      CreatureAccessoryInstance.address,
+      // nftId:
+      tokenId,
+      // amount:
+      amount,
+      // startTime:
+      (await ethers.provider.getBlock(1)).timestamp,
+      // endTime:
+      (await ethers.provider.getBlock(1)).timestamp + (3 * 24 * 60 * 60 * 1000),
+      // price:
+      100,
+      // currency:
+      RadesMockCurrencyInstance.address
+    );
+    const saleReceipt = await saleTx.wait();
+    const saleId = Number(saleReceipt.events?.[1]?.args?.id);
+    const [_nftId,
+      _isERC721,
+      _nftAddress,
+      _owner,
+      _currency,
+      _amount,
+      _purchased,
+      _startTime,
+      _endTime,
+      _price] = await MarketplaceInstance.sales(saleId)
+    expect(saleId).to.equal(2)
+    expect(_isERC721).to.equal(false)
+    expect(_nftAddress).to.equal(CreatureAccessoryInstance.address)
+    expect(_amount).to.equal(amount)
+    expect(_price).to.equal(100)
+    expect(await CreatureAccessoryInstance.balanceOf(MarketplaceInstance.address, tokenId)).to.equal(amount);
+    expect(await CreatureAccessoryInstance.balanceOf(address1.address, tokenId)).to.equal(0);
   });
-  // it("Royalties must be between 0% and 40%.", async function () {
-  //   const { instance, owner } = await deployContractFixture()
-
-  //   const initialOwnerBalance = await instance.balanceOf(owner.address)
-  //   var mintTokenErrorMessage: Error | null = null
-  //   try {
-  //     await instance.connect(owner).mintToken(DEFAULT_METADATA_CID, 45)
-  //   } catch (error) {
-  //     if (error instanceof Error) {
-  //       mintTokenErrorMessage = error
-  //     }
-  //   }
-  //   const newOwnerBalance = await instance.balanceOf(owner.address)
-
-
-  //   expect(initialOwnerBalance).to.equal(0)
-  //   expect(newOwnerBalance).to.equal(initialOwnerBalance)
-  //   expect(mintTokenErrorMessage).not.be.null
-  //   expect(mintTokenErrorMessage!!.message).to.contain("Royalties must be between 0% and 40%.")
-
-  // });
+  it("Should Buy Sale Creature Accessory (ERC1155)", async function () {
+    const saleId = 2,
+      amountBuy = 3,
+      saleInfo = await MarketplaceInstance.sales(saleId),
+      nftId = saleInfo[0],
+      price = saleInfo[saleInfo.length - 1] as any,
+      buyer = address2,
+      seller = address1,
+      oldSellerBalance = Number(await RadesMockCurrencyInstance.balanceOf(seller.address)),
+      oldBuyerBalance = Number(await RadesMockCurrencyInstance.balanceOf(buyer.address));
+    await RadesMockCurrencyInstance.connect(buyer).approve(MarketplaceInstance.address, 300)
+    const orderStatus = await ethers.utils.parseBytes32String(await MarketplaceInstance.getSaleStatus(saleId))
+    expect(orderStatus).to.equal("ACTIVE")
+    const buyTx = await MarketplaceInstance.connect(buyer).buy(
+      // saleId
+      saleId,
+      // recipient
+      address2.address,
+      // amountToBuy
+      3,
+      // amountFromBalance
+      0
+    );
+    const receiptBuy = (await buyTx).wait();
+    const buyEvents = (await receiptBuy)?.events || [];
+    const buyInfo = buyEvents[buyEvents?.length - 1]?.args;
+    const [system, fee] = await RegistryInstance.feeInfo(price * amountBuy)
+    expect(await RadesMockCurrencyInstance.balanceOf(system)).to.equal(3 + Number(fee))
+    expect(await RadesMockCurrencyInstance.balanceOf(seller.address)).to.equal(oldSellerBalance + price * amountBuy - Number(fee))
+    expect(await RadesMockCurrencyInstance.balanceOf(buyer.address)).to.equal(oldBuyerBalance - price * amountBuy)
+    expect(await CreatureAccessoryInstance.balanceOf(buyer.address, nftId)).to.equal(amountBuy)
+  });
+  it("Should get Sales transaction (ERC721)", async function () {
+    const sales = await MarketplaceInstance.getSales(1, 2);
+    expect(JSON.stringify(sales)).to.equal(
+      JSON.stringify([await MarketplaceInstance.sales(1), await MarketplaceInstance.sales(2)])
+    )
+  });
+  it("Should Allow for Create ", async function () {
+    const sales = await MarketplaceInstance.getSales(1, 2);
+    expect(JSON.stringify(sales)).to.equal(
+      JSON.stringify([await MarketplaceInstance.sales(1), await MarketplaceInstance.sales(2)])
+    )
+  });
 
   // it("metadata has already been used to mint an NFT.", async function () {
   //   const { instance, addr1, addr2 } = await deployContractFixture();

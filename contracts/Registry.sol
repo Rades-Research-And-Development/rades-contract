@@ -25,6 +25,7 @@ contract Registry is Ownable {
         approvedCurrencies[
             address(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa)
         ] = true;
+        systemWallet = address(this);
         // default 3% tax on a 18 decimal asset
         fee = 300;
         scale = 1e4;
@@ -46,20 +47,20 @@ contract Registry is Ownable {
         emit ScaleChanged(newScale);
     }
 
-    function setContractStatus(address nftContract, bool status)
-        external
-        onlyOwner
-    {
+    function setContractStatus(
+        address nftContract,
+        bool status
+    ) external onlyOwner {
         if (platformContracts[nftContract] != status) {
             platformContracts[nftContract] = status;
             emit ContractStatusChanged(nftContract, status);
         }
     }
 
-    function setCurrencyStatus(address tokenContract, bool status)
-        external
-        onlyOwner
-    {
+    function setCurrencyStatus(
+        address tokenContract,
+        bool status
+    ) external onlyOwner {
         if (allowAllCurrencies) revert AllCurrencyApproved();
 
         if (approvedCurrencies[tokenContract] != status) {
@@ -75,11 +76,9 @@ contract Registry is Ownable {
         }
     }
 
-    function feeInfo(uint256 salePrice)
-        external
-        view
-        returns (address, uint256)
-    {
+    function feeInfo(
+        uint256 salePrice
+    ) external view returns (address, uint256) {
         return (systemWallet, ((salePrice * fee) / scale));
     }
 }

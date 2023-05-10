@@ -354,7 +354,7 @@ contract MarketplaceTest is Test {
         nft721.approve(address(marketPlace), 1);
         marketPlace.createSale({
             isERC721: true,
-            nftAddress: address(nft721),
+            nftAddrexss: address(nft721),
             nftId: 1,
             amount: 1,
             startTime: block.timestamp,
@@ -368,8 +368,11 @@ contract MarketplaceTest is Test {
         // buy nft, emit the correct Purchase event
         vm.startPrank(addressB);
         mockCurrency.approve(address(marketPlace), 100);
+
         vm.expectEmit(true, true, true, true);
+
         emit Purchase(1, address(addressB), address(addressB));
+
         marketPlace.buy({
             saleId: 1,
             recipient: address(addressB),
